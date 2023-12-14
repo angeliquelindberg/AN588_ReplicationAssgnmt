@@ -1,0 +1,308 @@
+---
+title: "Data Replication Assignment" 
+author: "Angelique J. Lindberg" 
+date: "`r Sys.Date()`"
+output: 
+   html_document:
+    theme: cosmo
+    toc: yes
+    toc_float:
+      collapsed: true
+---
+
+# Packages needed:
+
+```{r, message=FALSE}
+library(curl)
+library(ggplot2)
+library(ggpubr)
+library(scales)
+library(tidyverse)
+```
+
+
+# Background 
+Let's recreate some data! For this exercise, we're going to be replicating some of the statistics and analyses from Casna and Schrader's (2022) paper from *Bioarchaeology International* entitled "Urban Beings: A Bioarchaeological Approach to Socioeconomic Status, Cribra Orbitalia, Porotic Hyperostosis, Linear Enamel Hypoplasia, and Sinusitis in the Early-Modern Northern Low Countries (A.D. 1626--1850)" (2022). This paper explores the effects on urbanization and socioeconomic status on physical health and its skeletal proxies. Specifically, the authors observed evidence of non-specific stress markers (Cribra orbitalia, Porotic hyperostosis, Linear enamel hypoplasia, and Chronic maxillary sinusitis) within skeletal assemblages from four different post-medieval urban Dutch populations (across three sites). Each sample is associated with a socioeconomic status and, thus, results of the stress markers are analyzed using chi-squared tests to see if there are differences in stress between sites with different socioeconomic status levels. The three sites are Arnhem aka ARJB (low status), Zwolle (middle-high status), Eindhoven - divided into an inside the church sample (high status) and an outside the church (middle-low status) sample. For this replication, I will recreate a bar chart figure of the prevalences of each condition across the sites (figure 3 of the original paper). I will also run a chi-squared test (and fisher's exact when cell counts below 5) to determine if there are significant differences in condition prevalence between sites.
+
+![Three of four conditions under study](https://github.com/angeliquelindberg/AN588_ReplicationAssgnmt/raw/main/img/PH%2CLEH%2CCO.png)  
+
+# Initializations
+First, let's load the data using curl.
+
+```{r}
+f<-curl("https://raw.githubusercontent.com/angeliquelindberg/AN588_ReplicationAssgnmt/main/CasnaSchrader2022urbanbeings_dataset.csv")
+d<-read.csv(f, header = TRUE, stringsAsFactors = TRUE)
+head(d) #displaying a few lines
+```
+
+Now let's edit the data slightly. The conditions were coded as 0=absent, 1=present, 4=NA (at least that is how I interpret the original data as no data dictionary or other description was provided). In order to manipulate the data easier, I 'm replacing all the 4s in the condition columns with NAs so that they can be not counted in calculations (and later removed with `na.omit`).
+
+```{r}
+d$CO[d$CO == 4]<-NA
+d$PH[d$PH == 4]<-NA
+d$LEH[d$LEH == 4]<-NA
+d$CMS[d$CMS == 4]<-NA
+```
+
+
+Just for my own purposes as I manipulate the data, let's also take a look at the structure of the data:
+```{r}
+str(d)
+```
+
+# Recreating Figure 3 
+## Original figure
+"Figure 3 displays the observed prevalence of cribra orbitalia, porotic hyperostosis, linear enamel hypoplasia, and chronic maxillary sinusitis between the four socioeconomic classes under study."
+
+![Figure 3](https://github.com/angeliquelindberg/AN588_ReplicationAssgnmt/raw/main/img/casnaschraderfigure3.png)
+
+## Figure 3 Replication - Version 1
+So, the ideal way to replicate would be to do so in as few chunks as possible. Here is me prepping a data table to add to ggplot.
+```{r, message=FALSE}
+d2<- d |> pivot_longer(cols = 5:8, names_to = "condition_type", values_to = "condition_presence") |> #first we need to change the layout of the data table to be able to use condition_type for grouping the chart
+  drop_na() |> #removing NAs
+  group_by(Collection, condition_type)|> #grouping by relevant factors in the chart - condition and collection
+  summarise(count= n())|> #adding up the occurrences of 1
+  mutate(perc = count/254) #adding a column with a percentage over total number of samples
+d2
+```
+
+I also need to make sure the bars of the chart will be in the order I want.
+```{r}
+d2$Collection<-ordered(d2$Collection, levels = c("ARJB", "Zwolle", "Eind_IN", "Eind_OUT"))  #quickly forcing the factor levels to be in the order I want so the legend and bars of the later chart will be same as original
+```
+
+
+As we can see in the second to last code chunk, I used the overall number of samples across all sites (254) based on the figure caption wording (for all samples under study), as discussed and agreed upon with Professor Schmitt in office hours. However, the resulting percentages do not appear to match with the original bar heights. This suggests that they did not in fact use the same n to calculate the percentages but used a different n for every bar, which, as far as I know, can not be replicated easily in one chunk (this possibility will be addressed again shortly).
+
+Now let's add the new data frame to ggplot and create our chart.
+```{r, warning=FALSE}
+fig3<-ggplot(d2, aes(x=condition_type, y=perc, fill=Collection)) + #want to use the condition as our x axis, and fill with collection to make that the fill factor, y is set to perc so the bars will be the percentage from the table calculated earlier
+  geom_bar(position="dodge", stat="identity") + #geom_bar is bar chart, position = dodge makes it a grouped bar chart instead of stacked, stat= identity tells it to use the y I gave it and not count its own  
+  theme_bw()+ #making it look more like original
+  scale_fill_grey(labels = c("Arnhem(low status)", "Zwolle(middle-high status)","Eindhoven inside the church(high status)", "Eindhoven outside the church(middle-low status)"))+ #making it look more like original with greyscale and adding legend labels
+  scale_y_continuous(labels=scales::percent_format(), #changing y label to percent and having it be 0-100 like the original
+                     limits = c(0,1))+
+  theme (legend.title = element_blank(),
+         legend.position = c(0.5,0.75),
+         legend.box.background = element_rect(color = "black", size = 0.25),
+        axis.title.x = element_blank(),
+         axis.title.y = element_blank()) +  #deleting axis titles because the original doesn't have any
+  scale_x_discrete(limits = c("CO", "PH", "LEH", "CMS"), labels = c("Cribra orbitalia", "Porotic hyperostosis", "Linear enamel hypoplasia", "Chronic maxillary sinusitis"), guide = guide_axis(n.dodge = 2)) + #reordering the conditions to be in order of original and changing label names, guiding them to be readable 
+  rremove("grid")+ #removing grid lines in background to match original
+  font("legend.text", size = 6)+ #changing legend font size
+  guides(fill = guide_legend(nrow = 2)) #changing legend appearance to wrap
+fig3
+```
+\
+\
+Again, we can see that this is not the same as the original (though it is interesting to visualize the data in this way, we can see that the stress levels generally seem to be higher as status is lower). 
+So, let's see if we can actually recreate the figure, even if it's much less clean than it should be...
+
+## Figure 3 Replication - Version 2
+This is the table from the paper, attached to the chi-squared results, where I can see that the actual percentages from the bar are from (at least based on eyeballing it since there's no n above the bars, or percentages included in the figure).
+
+![Table 4:Raw Data for percentages](https://github.com/angeliquelindberg/AN588_ReplicationAssgnmt/raw/main/img/table4.png)
+The columns of interest here are N and *n*(%). So let's copy these in by hand...
+```{r}
+CO<-data.frame(Collection = c("ARJB","ZWOLLE", "EIND_IN", "EIND_OUT"), n = c(24,7,6,4), N=c(106,83,18,30)) |> #creating a data frame for the Cribra Orbitalia columns
+  mutate(perc = n/N) #and adding a column for percentage and calculating them...we can see they match the rounded percentages from the table
+CO
+```
+
+...and create separate plots to combine later.
+```{r}
+COplot<-ggplot(CO, aes(x=Collection, y=perc, fill=Collection)) + #similar code to above - here x=collection since we don't have multiple conditions in one graph, but also fill since we want bars to also fill and have a legend by collection
+  geom_bar(stat="identity", show.legend = FALSE) + #again, using stat= identity to tell it to use the y I gave it and not count its own - don't need dodge because don't have to group without multiple conditions
+  scale_y_continuous(labels=scales::percent_format(),
+                     limits = c(0,1)) +  #changing y label to percent and having it be 0-100 like the original
+  scale_x_discrete(limits = CO$Collection)+ #telling it to be in the order of the dataframe, not sure why the legend isn't in the same order as the bars
+  scale_fill_grey(labels = c("Arnhem(low status)", "Eindhoven inside the church(high status)", "Eindhoven outside the church(middle-low status)", "Zwolle(middle-high status)")) + #making it look more like original and changing 
+  theme_bw()+ #making it look more like original
+  theme (axis.title.x = element_blank(), 
+         axis.title.y = element_blank(),
+         axis.text.x = element_blank()) + #deleting axis titles because the original doesn't have any #also deleting the collection names from underneath with the axis.text
+  rremove("grid") #removing grid lines in background to match original
+COplot
+```
+\
+Let's do the same process for porotic hyperostosis...
+```{r}
+PH<-data.frame(Collection = c("ARJB","ZWOLLE", "EIND_IN", "EIND_OUT"), n = c(32,17,7,5), N=c(106,83,22,38)) |> #creating a data frame for the Porotic Hyperostosis columns
+  mutate(perc = n/N) #and adding a column for percentage
+PH
+```
+
+
+```{r}
+PHplot<-ggplot(PH, aes(x=Collection, y=perc, fill=Collection)) +  #rinse and repeat
+  geom_bar(stat="identity", show.legend = FALSE) + 
+  scale_x_discrete(limits = PH$Collection)+
+  theme_bw()+
+  scale_fill_grey(labels =  c("Arnhem(low status)", "Eindhoven inside the church(high status)", "Eindhoven outside the church(middle-low status)", "Zwolle(middle-high status)"))+
+  scale_y_continuous(labels=scales::percent_format(),
+                     limits = c(0,1))+
+  theme (axis.title.x = element_blank(),
+         axis.title.y = element_blank(),
+         axis.text.x = element_blank()) +
+  rremove("grid")
+PHplot
+```
+\
+...and linear enamel hypoplasia...
+```{r}
+LEH<-data.frame(Collection = c("ARJB","ZWOLLE", "EIND_IN", "EIND_OUT"), n = c(26,27,7,15), N=c(94,62,17,32)) |>  #creating a data frame for the linear enamel hypoplasia columns
+  mutate(perc = n/N) #and adding a column for percentage
+LEH
+```
+
+```{r}
+LEHplot<-ggplot(LEH, aes(x=Collection, y=perc, fill=Collection)) +  #rinse and repeat
+  geom_bar(stat="identity", show.legend = FALSE) + 
+  scale_x_discrete(limits = LEH$Collection)+
+  theme_bw()+
+  scale_fill_grey(labels = c("Arnhem(low status)", "Eindhoven inside the church(high status)", "Eindhoven outside the church(middle-low status)", "Zwolle(middle-high status)"))+
+  scale_y_continuous(labels=scales::percent_format(),
+                     limits = c(0,1))+
+  theme (axis.title.x = element_blank(),
+         axis.title.y = element_blank(),
+         axis.text.x = element_blank()) +
+  rremove("grid")
+LEHplot
+```
+\
+... and chronic maxillary sinusitus (with slightly different code).
+```{r}
+CMS<-data.frame(Collection = c("ARJB","ZWOLLE", "EIND_IN", "EIND_OUT"), n = c(61,45,13,14), N=c(109,83,22,40)) |> #creating a data frame for the Chronic maxillary sinusitis columns
+  mutate(perc = n/N) #and adding a column for percentage
+CMS
+```
+
+```{r, fig.width=10}
+CMSplot<-ggplot(CMS, aes(x=Collection, y=perc, fill=Collection)) +  #rinse and repeat ... with minor differences
+  geom_bar(stat="identity", show.legend = TRUE) + #we want to show this legend so that the settings we add for it will affect the final ggarranged version
+  scale_x_discrete(limits = CMS$Collection)+
+  theme_bw()+
+  scale_fill_grey(labels = c("Arnhem(low status)", "Eindhoven inside the church(high status)", "Eindhoven outside the church(middle-low status)", "Zwolle(middle-high status)"))+ 
+  scale_y_continuous(labels=scales::percent_format(),
+                     limits = c(0,1))+
+  theme (legend.title=element_blank(),
+         legend.box.background = element_rect(color="black", size=0.25),
+         axis.title.x = element_blank(),
+         axis.title.y = element_blank(),
+         axis.text.x = element_blank()) + #adding a box around legend
+  rremove("grid")+ 
+  font("legend.text", size =  10) + #here is some new code to adjust the final legend #changing font size
+  guides(fill = guide_legend(nrow = 2)) #making the legend fit better by wrapping
+CMSplot
+```
+
+
+Okay, now let's try and combine them. There's not a super easy way, unfortunately, even though the axes are identical, but let's use ggarrange from {ggpubr} to get as close as possible. (There's also a ggarrange in the {egg} package but that one doesn't allow for a common legend.)
+```{r, fig.width=10}
+fig3.2<-ggpubr::ggarrange(COplot + theme(plot.margin = margin(r = 1)), PHplot + 
+              theme(axis.text.y = element_blank(), #deleting axis ticks and axis titles so they fit closer together
+                     axis.ticks.y = element_blank(),
+                     axis.title.x = element_blank(),
+                     axis.title.y = element_blank(),
+                     plot.margin = margin(r = 1, l = 1)), #setting margins to be as small as possible 
+          LEHplot + 
+            theme(axis.text.y = element_blank(), #deleting axis ticks and axis titles so they fit closer together
+                     axis.ticks.y = element_blank(),
+                     axis.title.x = element_blank(),
+                     axis.title.y = element_blank(), 
+                     plot.margin = margin(r = 1, l = 1)), 
+          CMSplot + 
+               theme(axis.text.y = element_blank(), #deleting axis ticks and axis titles so they fit closer together
+                     axis.ticks.y = element_blank(),
+                     axis.title.x = element_blank(),
+                     axis.title.y = element_blank(),
+                    plot.margin = margin(l = 1)), ncol = 4, nrow = 1, legend = "bottom",  common.legend = TRUE, labels = c("Cribra Orbitalia", "Porotic hyperostosis", "Linear enamel hypoplasia", "Chronic maxillary sinusitus"), hjust=c(-1.2, -0.7, -0.4,-0.3), font.label = list(size = 10, face="plain"), widths = c(1,1,1,1)) #setting it to be 4 by 1 (all in one row), adding a common legend, adding labels, adjusting size of labels tailored to each panel with hjust, changing font and typeface #with widths here and fig.width in the setup I'm making sure the bars stay the same size
+fig3.2
+```
+
+So, this version is a successful replication in terms of the information conveyed being the same (identical bar heights), but it's not as simple to code and I find it less pleasing to look at than the previous version.
+
+
+# Statistical analyses
+For the statistical tests, I'm going to load in the unedited data (so I can add the NA frequency to the tables as well).
+
+```{r}
+f2<-curl("https://raw.githubusercontent.com/angeliquelindberg/AN588_ReplicationAssgnmt/main/CasnaSchrader2022urbanbeings_dataset.csv")
+d1<-read.csv(f2, header = TRUE, stringsAsFactors = TRUE)
+```
+
+To do a chi-squared test, I need to separate out a 2 x 2 contingency table of prevalence. Here's an example of the workflow you would repeat for each condition and site comparison in table 5 of the paper. 
+
+![Table 5](https://github.com/angeliquelindberg/AN588_ReplicationAssgnmt/raw/main/img/table5.png)
+So, for cribra orbitalia, we'll subset the prevalence by site into a table.
+```{r}
+COtable<-table(d1$Collection, d1$CO) #creating a table of collection by cribra orbitalia
+colnames(COtable)<-c("present", "absent", "NA") #changing names to be more clear
+COtable
+```
+Then we'll subset this table even further to compare prevalence between Eindhoven inside the church and Eindhoven outside the church, for example. Here is our 2 x 2 table for our test.
+```{r}
+EindCOtable<-COtable[2:3, 1:2] #specifying which rows and columns to subset
+EindCOtable
+```
+We can see that this example has quickly turned into a fisher's exact test. A chi-squared test is not appropriate for cell values below 5 and we can see that Eindhoven outside the site has an absence count of 4. We'll continue with that test.
+```{r}
+fisher.test(EindCOtable) #handy one-liner
+```
+The reported p value in Table 5 for the fisher's exact test comparing the Eindhoven site inside the church to the and Eindhoven site outside the church was 0.145 so my result of 0.1446 was a successful replication. This is not a significant result, since the p value is greater than the alpha of 0.05. This suggest that there is not a difference in cribra orbitalia prevalence between Eindhoven individuals inside the church and those outside the church.
+
+For fullness' sake, let's also replicate a chi-squared test.
+
+Returning to that original cribra orbitalia table, let's subset the other two sites and compare them. First, we need our contingency table.
+```{r}
+ARJB<-COtable[1, 1:2] #selecting the Arnhem site's CO data - row 1, cols 1-2
+Zwolle<-COtable[4, 1:2] #selectiing Zwolle's CO data - row 4, cols 1-2
+AZCOtable<-rbind(ARJB,Zwolle) #binding the rows
+AZCOtable
+```
+Now we can run our test.
+```{r}
+chisq.test(AZCOtable, correct=FALSE) #defaults to Yates' correction, which, through trial and error, I determined not to be what the original publication did, so I set to FALSE
+```
+
+The chi-squared value from table 5 was χ2 = 6.853 with a significant p-value of 0.009. These results are replicated exactly in the code above (χ2 = 6.853, p-value = 0.008849). These significant results indicate that there is a difference in cribra orbitalia rate between the sites. Perhaps the "low-status" individuals from the Arnhem site experienced more stress than those of "middle-class" Zwolle.
+
+# Reflection
+  So, the most obvious issue with this replication is the lack of clarity regarding the original study's data analysis process. I mention the lack of a data dictionary accompanying their data and, indeed, I'm grateful that my primary investigators encouraged me and my research partner to cultivate good data management practices and I will hopefully never put some unsuspecting undergraduate through the same confusing process I went through. That was the very first hiccup, having to guess the key to their variables, but not the only problem in this replication. There was also the complete confusion regarding what was going on with Figure 3 in general. I spent weeks figuring out how to pipe and use tidyverse and ggplot more efficiently, not to mention the tedious trial and error process of deleting elements and manipulating them to try and perfect the plot, only to realize they were not taking the n of each collection as I originally thought, nor is it ever even stated what that n is anywhere in the paper. Ideally, they would place the n's inside/near the bar it relates to and I would also like to see the exact percentages on the graph itself.  
+  
+  There was also a lack of clarity surrounding the inferential statistics performed in the paper. The authors did not use the Yates' correction for Pearson's chi-squared test, but Yates' correction is the (invisible) default in R. This caused much confusion when my replication didn't initially match.
+
+  Overall, this assignment has reminded me the importance of not only open access data but also understandable, accessible data and data analyses. I'm also more aware of as the necessity of transparency in the statistical analysis process.
+    
+
+
+# Sources
+
+Cat Metcalfe, fellow AN588 student
+
+Anha Feldstein, archaeology grad student 
+
+Kabacoff R. 2022. R in Action, 3rd Edition. New York: Manning Publications.
+
+Tillman D. 2016. The Book of R: A First Course in Programming and Statistics. San Francisco: No Starch Press.
+
+https://www.uvm.edu/~statdhtx/StatPages/R/Chi-Square-Folder/chi-square-alternatives.html
+
+https://stackoverflow.com/questions/24776200/ggplot-replace-count-with-percentage-in-geom-bar
+
+https://campus.datacamp.com/courses/introduction-to-r-for-finance/factors-4?ex=8
+
+Condition image: https://www.eurekalert.org/multimedia/868413
+
+https://www.statology.org/ggplot-change-x-axis-labels/#:~:text=You%20can%20use%20the%20scale_x_discrete,label3'%2C%20...))
+
+https://aosmith.rbind.io/2019/05/13/small-multiples-plot/#using-cowplot-to-combine-plots
+
+
+
+
+
+
+
+
